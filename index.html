@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1a73e8">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<title>Cotizador de Viajes</title>
+<style>
+  :root { --b:#1a73e8; --bg:#f4f6fa; --t:#1f2937; --m:#6b7280; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, Roboto, sans-serif; background:var(--bg); color:var(--t); }
+  header { background:var(--b); color:#fff; padding:14px 16px; font-size:18px; font-weight:600; }
+  main { max-width:560px; margin:0 auto; padding:12px; }
+  .card { background:#fff; border-radius:12px; padding:14px; margin-bottom:12px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  h2 { font-size:15px; margin:0 0 10px; }
+  label { display:block; font-size:13px; color:var(--m); margin:8px 0 4px; }
+  input, select { width:100%; padding:11px; border:1px solid #d1d5db; border-radius:8px; font-size:16px; background:#fff; }
+  .stop { display:flex; gap:6px; margin-bottom:6px; }
+  button { background:var(--b); color:#fff; border:0; border-radius:8px; padding:12px; font-size:16px; width:100%; margin-top:8px; }
+  button.icon { width:44px; margin:0; background:#e5e7eb; color:#374151; }
+  button.small { width:auto; padding:8px 12px; font-size:13px; margin:8px 6px 0 0; }
+  button.danger { background:#dc2626; }
+  button.alt { background:#fff; color:var(--b); border:1px solid var(--b); }
+  button:disabled { opacity:.6; }
+  .row { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #eee; }
+  .row.total { font-size:20px; border:0; padding-top:12px; color:var(--b); }
+  .muted { color:var(--m); font-size:13px; }
+  #error { display:none; background:#fee2e2; color:#991b1b; padding:10px; border-radius:8px; margin-bottom:12px; }
+  #result { display:none; }
+  .check { display:flex; align-items:center; gap:8px; margin-top:10px; }
+  .check input { width:auto; }
+  a.btn { display:block; text-align:center; text-decoration:none; background:#fff; color:var(--b); border:1px solid var(--b); border-radius:8px; padding:12px; margin-top:8px; }
+  details summary { font-weight:600; cursor:pointer; }
+</style>
+</head>
+<body>
+<header>🚗 Cotizador de Viajes</header>
+<main>
+  <div id="error"></div>
+
+  <div class="card">
+    <h2>Recorrido</h2>
+    <div id="stops"></div>
+    <datalist id="sugg"></datalist>
+    <button type="button" id="addStop" class="alt">+ Agregar parada</button>
+    <div class="check"><input type="checkbox" id="roundTrip"><span>Ida y vuelta</span></div>
+  </div>
+
+  <div class="card">
+    <details>
+      <summary>Ajustes</summary>
+      <label>Precio por km (ARS)</label>
+      <input id="pricePerKm" type="number" inputmode="decimal" min="0" step="any">
+      <label>Tipo de vehículo (para peajes)</label>
+      <select id="emission">
+        <option value="GASOLINE">Nafta</option>
+        <option value="DIESEL">Diésel</option>
+        <option value="ELECTRIC">Eléctrico</option>
+        <option value="HYBRID">Híbrido</option>
+      </select>
+      <label>API key de Google Maps</label>
+      <input id="apiKey" type="password" placeholder="AIza…" autocomplete="off">
+      <p class="muted">Necesita habilitadas: Routes API y Places API (New).</p>
+    </details>
+  </div>
+
+  <button id="calc">Calcular</button>
+
+  <div id="result">
+    <div class="card" style="margin-top:12px">
+      <h2>Cotización</h2>
+      <div id="quote"></div>
+      <div id="manualWrap" style="display:none">
+        <label>Peajes sin tarifa en Google: monto manual (ARS)</label>
+        <input id="manualToll" type="number" inputmode="decimal" min="0" step="any" value="0">
+      </div>
+      <a id="mapsLink" class="btn" target="_blank" rel="noopener">Ver ruta en Google Maps</a>
+    </div>
+
+    <div class="card">
+      <h2>Reserva</h2>
+      <label>Cliente (opcional)</label>
+      <input id="client" type="text">
+      <label>Fecha y hora de salida</label>
+      <input id="when" type="datetime-local">
+      <button id="save">Guardar reserva y agregar a Google Calendar</button>
+      <button id="icsNow" class="alt">Descargar archivo de calendario (.ics)</button>
+    </div>
+  </div>
+
+  <h2 style="margin:18px 4px 8px">Reservas guardadas</h2>
+  <div id="list"></div>
+</main>
+<script src="app.js"></script>
+</body>
+</html>
