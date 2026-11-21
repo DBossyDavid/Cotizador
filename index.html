@@ -32,6 +32,15 @@
   .check { display:flex; align-items:center; gap:8px; margin-top:10px; }
   .check input { width:auto; }
   a.btn { display:block; text-align:center; text-decoration:none; background:#fff; color:var(--b); border:1px solid var(--b); border-radius:8px; padding:12px; margin-top:8px; }
+  #tripCard { display:none; text-align:center; }
+  #tripCard.waiting { outline:3px solid #f59e0b; }
+  .big { font-size:44px; font-weight:700; color:var(--b); margin:4px 0; }
+  .timers { display:flex; gap:8px; margin:10px 0; }
+  .timers > div { flex:1; background:#f3f4f6; border-radius:10px; padding:10px; }
+  .timers b { display:block; font-size:22px; font-variant-numeric:tabular-nums; }
+  .waiting .timers .w { background:#fef3c7; }
+  button.go { background:#16a34a; }
+  pre { white-space:pre-wrap; font-family:inherit; text-align:left; background:#f3f4f6; padding:10px; border-radius:8px; }
   details summary { font-weight:600; cursor:pointer; }
 </style>
 </head>
@@ -39,6 +48,31 @@
 <header>🚗 Cotizador de Viajes</header>
 <main>
   <div id="error"></div>
+
+  <div id="tripCard" class="card">
+    <h2>Viaje en curso</h2>
+    <div class="muted" id="tripRoute"></div>
+    <div class="big" id="tTotal">$ 0</div>
+    <div class="muted">Viaje + peajes: <span id="tBase"></span></div>
+    <div class="timers">
+      <div>Transcurrido<b id="tElapsed">00:00:00</b></div>
+      <div class="w">Espera<b id="tWait">00:00:00</b></div>
+    </div>
+    <div class="muted">Costo de espera: <span id="tWaitCost"></span></div>
+    <button id="waitBtn">⏱ Iniciar espera</button>
+    <button id="extraBtn" class="alt">+ Agregar extra (peaje, estacionamiento)</button>
+    <button id="finishBtn" class="go">Finalizar viaje</button>
+    <button id="cancelBtn" class="alt">Cancelar viaje</button>
+  </div>
+
+  <div id="summary" class="card" style="display:none">
+    <h2>Viaje finalizado ✔</h2>
+    <pre id="summaryText"></pre>
+    <a id="waShare" class="btn" target="_blank" rel="noopener">Enviar por WhatsApp</a>
+    <button id="closeSummary" class="alt">Cerrar</button>
+  </div>
+
+  <div id="planner">
 
   <div class="card">
     <h2>Recorrido</h2>
@@ -53,6 +87,10 @@
       <summary>Ajustes</summary>
       <label>Precio por km (ARS)</label>
       <input id="pricePerKm" type="number" inputmode="decimal" min="0" step="any">
+      <label>Precio por minuto de espera (ARS)</label>
+      <input id="waitPrice" type="number" inputmode="decimal" min="0" step="any">
+      <label>Minutos de espera gratis (gracia)</label>
+      <input id="grace" type="number" inputmode="decimal" min="0" step="any">
       <label>Tipo de vehículo (para peajes)</label>
       <select id="emission">
         <option value="GASOLINE">Nafta</option>
@@ -77,6 +115,7 @@
         <input id="manualToll" type="number" inputmode="decimal" min="0" step="any" value="0">
       </div>
       <a id="mapsLink" class="btn" target="_blank" rel="noopener">Ver ruta en Google Maps</a>
+      <button id="startTrip" class="go">▶ Iniciar viaje ahora</button>
     </div>
 
     <div class="card">
@@ -90,7 +129,9 @@
     </div>
   </div>
 
-  <h2 style="margin:18px 4px 8px">Reservas guardadas</h2>
+  </div><!-- /planner -->
+
+  <h2 style="margin:18px 4px 8px">Reservas y viajes</h2>
   <div id="list"></div>
 </main>
 <script src="app.js"></script>

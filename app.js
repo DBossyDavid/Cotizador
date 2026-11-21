@@ -37,6 +37,29 @@
     };
   }
 
+  // Espera: se cobra por minuto iniciado, después de los minutos de gracia
+  function computeWait(waitMs, graceMin, pricePerMin) {
+    var totalMin = waitMs / 60000;
+    var billable = Math.max(0, totalMin - (graceMin || 0));
+    var billableMin = Math.max(0, Math.ceil(billable - 1e-9)) + 0; // evita -0
+    return { totalMin: totalMin, billableMin: billableMin, cost: billableMin * (pricePerMin || 0) };
+  }
+  function tripWaitMs(trip, now) {
+    return (trip.waitMs || 0) + (trip.waitingSince ? Math.max(0, now - trip.waitingSince) : 0);
+  }
+  function tripTotals(trip, now) {
+    var w = computeWait(tripWaitMs(trip, now), trip.grace, trip.waitPrice);
+    var extras = (trip.extras || []).reduce(function (a, b) { return a + b; }, 0);
+    return {
+      wait: w, extras: extras,
+      total: trip.kmCost + trip.tolls + extras + w.cost
+    };
+  }
+  function fmtDur(ms) {
+    var s = Math.floor(Math.max(0, ms) / 1000);
+    return pad(Math.floor(s / 3600)) + ':' + pad(Math.floor(s / 60) % 60) + ':' + pad(s % 60);
+  }
+
   function pad(n) { return String(n).padStart(2, '0'); }
   function icsDate(d) {
     return d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) + 'T' +
@@ -103,7 +126,8 @@
   var api = {
     moneyToNumber: moneyToNumber, parseTolls: parseTolls, parseDurationSeconds: parseDurationSeconds,
     computeQuote: computeQuote, buildICS: buildICS, googleCalendarURL: googleCalendarURL,
-    mapsURL: mapsURL, buildRoutesRequest: buildRoutesRequest
+    mapsURL: mapsURL, buildRoutesRequest: buildRoutesRequest,
+    computeWait: computeWait, tripWaitMs: tripWaitMs, tripTotals: tripTotals, fmtDur: fmtDur
   };
   if (typeof module !== 'undefined' && module.exports) { module.exports = api; return; }
   root.Cotizador = api;
@@ -263,7 +287,8 @@
       var d = document.createElement('div'); d.className = 'card res';
       d.innerHTML = '<b></b><div class="muted"></div><div class="muted"></div>';
       d.children[0].textContent = r.title;
-      d.children[1].textContent = new Date(r.startISO).toLocaleString('es-AR') + ' · ' + r.km.toFixed(1) + ' km';
+      d.children[1].textContent = new Date(r.startISO).toLocaleString('es-AR') + ' · ' + r.km.toFixed(1) + ' km' +
+        (r.finished ? ' · espera ' + r.waitMin + ' min · ✔ realizado' : '');
       d.children[2].textContent = 'Total ' + fmt(r.total);
       var b1 = document.createElement('button'); b1.textContent = 'Agregar al calendario (.ics)'; b1.className = 'small';
       b1.onclick = function () { downloadICS(r); };
@@ -273,7 +298,128 @@
     });
   }
 
+  // ---------- Viaje en curso (taxímetro de espera) ----------
+  var trip = null, tickTimer = null, wakeLock = null;
+
+  function requestWake() {
+    try {
+      if (navigator.wakeLock) navigator.wakeLock.request('screen').then(function (l) { wakeLock = l; }).catch(function () {});
+    } catch (e) {}
+  }
+  function releaseWake() { try { if (wakeLock) wakeLock.release(); } catch (e) {} wakeLock = null; }
+
+  function startTrip() {
+    if (!state.lastQuote || !state.route) return showError('Primero calculá el viaje.');
+    showError('');
+    var q = state.lastQuote;
+    LS.set('waitPrice', parseFloat($('waitPrice').value) || 0);
+    LS.set('grace', parseFloat($('grace').value) || 0);
+    trip = {
+      id: String(Date.now()), startedAt: Date.now(), stops: state.stops, client: $('client').value.trim(),
+      km: q.km, kmCost: q.kmCost, tolls: q.tolls, extras: [], waitMs: 0, waitingSince: null,
+      waitPrice: parseFloat($('waitPrice').value) || 0, grace: parseFloat($('grace').value) || 0,
+      durationSec: parseDurationSeconds(state.route.duration) * ($('roundTrip').checked ? 2 : 1),
+      roundTrip: $('roundTrip').checked
+    };
+    LS.set('trip', trip);
+    showTrip();
+  }
+
+  function showTrip() {
+    $('planner').style.display = 'none';
+    $('summary').style.display = 'none';
+    $('tripCard').style.display = 'block';
+    $('tripRoute').textContent = trip.stops.join(' → ');
+    requestWake();
+    clearInterval(tickTimer);
+    tickTimer = setInterval(renderTrip, 1000);
+    renderTrip();
+  }
+
+  function renderTrip() {
+    if (!trip) return;
+    var now = Date.now(), t = tripTotals(trip, now), waiting = !!trip.waitingSince;
+    $('tTotal').textContent = fmt(t.total);
+    $('tElapsed').textContent = fmtDur(now - trip.startedAt);
+    $('tWait').textContent = fmtDur(tripWaitMs(trip, now));
+    $('tWaitCost').textContent = fmt(t.wait.cost) + (trip.grace ? ' (' + trip.grace + ' min de gracia)' : '');
+    $('tBase').textContent = fmt(trip.kmCost + trip.tolls) + (t.extras ? ' + extras ' + fmt(t.extras) : '');
+    $('waitBtn').textContent = waiting ? '⏸ Terminar espera' : '⏱ Iniciar espera';
+    $('waitBtn').className = waiting ? 'danger' : '';
+    $('tripCard').classList.toggle('waiting', waiting);
+  }
+
+  function toggleWait() {
+    if (!trip) return;
+    var now = Date.now();
+    if (trip.waitingSince) { trip.waitMs += now - trip.waitingSince; trip.waitingSince = null; }
+    else trip.waitingSince = now;
+    LS.set('trip', trip);
+    if (navigator.vibrate) navigator.vibrate(60);
+    renderTrip();
+  }
+
+  function addExtra() {
+    if (!trip) return;
+    var v = prompt('Monto del extra (peaje, estacionamiento, etc.) en ARS:');
+    var n = parseFloat(String(v || '').replace(',', '.'));
+    if (!(n > 0)) return;
+    trip.extras.push(n); LS.set('trip', trip); renderTrip();
+  }
+
+  function finishTrip() {
+    if (!trip) return;
+    if (!confirm('¿Finalizar el viaje?')) return;
+    var now = Date.now();
+    if (trip.waitingSince) { trip.waitMs += now - trip.waitingSince; trip.waitingSince = null; }
+    var t = tripTotals(trip, now);
+    var s = trip.stops, client = trip.client;
+    var desc = 'Cliente: ' + (client || '-') + '\n' +
+      'Recorrido: ' + s.join(' → ') + (trip.roundTrip ? ' (ida y vuelta)' : '') + '\n' +
+      'Distancia: ' + trip.km.toFixed(1) + ' km → ' + fmt(trip.kmCost) + '\n' +
+      'Peajes: ' + fmt(trip.tolls) + '\n' +
+      (t.extras ? 'Extras: ' + fmt(t.extras) + '\n' : '') +
+      'Espera: ' + fmtDur(tripWaitMs(trip, now)) + ' → ' + fmt(t.wait.cost) + '\n' +
+      'TOTAL: ' + fmt(t.total);
+    var r = {
+      id: trip.id, title: 'Viaje ' + (client ? client + ' – ' : '') + s[0] + ' → ' + s[s.length - 1],
+      startISO: new Date(trip.startedAt).toISOString(),
+      durationSec: Math.round((now - trip.startedAt) / 1000), stops: s, description: desc,
+      total: t.total, km: trip.km, client: client, finished: true, waitMin: Math.round(tripWaitMs(trip, now) / 60000)
+    };
+    var list = LS.get('reservas', []); list.unshift(r); LS.set('reservas', list);
+    LS.set('trip', null); trip = null; clearInterval(tickTimer); releaseWake();
+    $('tripCard').style.display = 'none';
+    $('planner').style.display = 'block';
+    $('summaryText').textContent = desc;
+    $('waShare').href = 'https://wa.me/?text=' + encodeURIComponent(desc);
+    $('summary').style.display = 'block';
+    renderList();
+    window.scrollTo(0, 0);
+  }
+
+  function cancelTrip() {
+    if (!trip || !confirm('¿Cancelar el viaje sin guardarlo?')) return;
+    LS.set('trip', null); trip = null; clearInterval(tickTimer); releaseWake();
+    $('tripCard').style.display = 'none'; $('planner').style.display = 'block';
+  }
+
+  document.addEventListener('visibilitychange', function () { if (trip && !document.hidden) { requestWake(); renderTrip(); } });
+
   document.addEventListener('DOMContentLoaded', function () {
+    $('waitPrice').value = LS.get('waitPrice', 0);
+    $('grace').value = LS.get('grace', 5);
+    $('waitPrice').onchange = function () { LS.set('waitPrice', parseFloat($('waitPrice').value) || 0); };
+    $('grace').onchange = function () { LS.set('grace', parseFloat($('grace').value) || 0); };
+    $('startTrip').onclick = startTrip;
+    $('waitBtn').onclick = toggleWait;
+    $('extraBtn').onclick = addExtra;
+    $('finishBtn').onclick = finishTrip;
+    $('cancelBtn').onclick = cancelTrip;
+    $('closeSummary').onclick = function () { $('summary').style.display = 'none'; };
+    trip = LS.get('trip', null);
+    if (trip) showTrip();
+
     $('apiKey').value = LS.get('apiKey', '');
     $('pricePerKm').value = LS.get('pricePerKm', 1000);
     $('emission').value = LS.get('emission', 'GASOLINE');
