@@ -41,12 +41,28 @@
   .waiting .timers .w { background:#fef3c7; }
   button.go { background:#16a34a; }
   pre { white-space:pre-wrap; font-family:inherit; text-align:left; background:#f3f4f6; padding:10px; border-radius:8px; }
+  #tabs { display:flex; gap:6px; margin-bottom:12px; }
+  #tabs button { margin:0; background:#e5e7eb; color:#374151; flex:1; padding:11px 6px; }
+  #tabs button.on { background:var(--b); color:#fff; }
+  #resView, #resDetail, #doneBox { display:none; }
+  .clickable { cursor:pointer; } .clickable:active { background:#f3f4f6; }
+  .chip.warn { background:#fee2e2; color:#991b1b; }
+  dl.info { margin:0 0 8px; } dl.info dt { font-size:12px; color:var(--m); margin-top:8px; } dl.info dd { margin:2px 0 0; font-size:16px; }
+  .rowline { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .amt { color:var(--b); white-space:nowrap; }
+  .chip { font-size:12px; background:#e0e7ff; color:#3730a3; padding:2px 8px; border-radius:99px; }
   details summary { font-weight:600; cursor:pointer; }
 </style>
 </head>
 <body>
 <header>🚗 Cotizador de Viajes</header>
 <main>
+  <nav id="tabs">
+    <button id="tabTrip" type="button" class="on">Cotizar</button>
+    <button id="tabRes" type="button">Reservas</button>
+  </nav>
+
+  <div id="viaje">
   <div id="error"></div>
 
   <div id="tripCard" class="card">
@@ -91,6 +107,9 @@
       <input id="waitPrice" type="number" inputmode="decimal" min="0" step="any">
       <label>Minutos de espera gratis (gracia)</label>
       <input id="grace" type="number" inputmode="decimal" min="0" step="any">
+      <label>API key de Google Maps</label>
+      <input id="apiKey" type="password" placeholder="AIza…" autocomplete="off">
+      <p class="muted">Necesita habilitadas: Routes API y Places API (New).</p>
       <label>Tipo de vehículo (para peajes)</label>
       <select id="emission">
         <option value="GASOLINE">Nafta</option>
@@ -98,9 +117,6 @@
         <option value="ELECTRIC">Eléctrico</option>
         <option value="HYBRID">Híbrido</option>
       </select>
-      <label>API key de Google Maps</label>
-      <input id="apiKey" type="password" placeholder="AIza…" autocomplete="off">
-      <p class="muted">Necesita habilitadas: Routes API y Places API (New).</p>
     </details>
   </div>
 
@@ -115,7 +131,7 @@
         <input id="manualToll" type="number" inputmode="decimal" min="0" step="any" value="0">
       </div>
       <a id="mapsLink" class="btn" target="_blank" rel="noopener">Ver ruta en Google Maps</a>
-      <button id="startTrip" class="go">▶ Iniciar viaje ahora</button>
+      <button id="startTrip" class="alt">▶ Iniciar viaje ahora (sin reserva)</button>
     </div>
 
     <div class="card">
@@ -124,15 +140,42 @@
       <input id="client" type="text">
       <label>Fecha y hora de salida</label>
       <input id="when" type="datetime-local">
-      <button id="save">Guardar reserva y agregar a Google Calendar</button>
-      <button id="icsNow" class="alt">Descargar archivo de calendario (.ics)</button>
+      <div class="check"><input type="checkbox" id="addCal" checked><span>Agregar también a Google Calendar</span></div>
+      <button id="save" class="go">Guardar reserva</button>
     </div>
   </div>
 
   </div><!-- /planner -->
 
-  <h2 style="margin:18px 4px 8px">Reservas y viajes</h2>
-  <div id="list"></div>
+  <div id="resView">
+    <div id="resListBox">
+      <h2 style="margin:4px 4px 8px">Reservas</h2>
+      <div id="list"></div>
+
+      <div id="doneBox">
+        <h2 style="margin:18px 4px 8px">Viajes realizados</h2>
+        <div id="doneList"></div>
+      </div>
+    </div>
+
+    <div id="resDetail" class="card">
+      <h2 id="rdTitle"></h2>
+      <dl class="info">
+        <dt>Fecha y hora</dt><dd id="rdWhen"></dd>
+        <dt>Cliente</dt><dd id="rdClient"></dd>
+        <dt>Recorrido</dt><dd id="rdRoute"></dd>
+      </dl>
+      <div id="rdBreak"></div>
+      <p class="muted" id="rdWaitInfo"></p>
+      <button id="rdStart" type="button" class="go">▶ Iniciar viaje</button>
+      <a id="rdMaps" class="btn" target="_blank" rel="noopener">Ver ruta en Google Maps</a>
+      <button id="rdGcal" type="button" class="alt">Agregar a Google Calendar</button>
+      <button id="rdIcs" type="button" class="alt">Descargar archivo de calendario (.ics)</button>
+      <button id="rdDel" type="button" class="danger">Borrar reserva</button>
+      <button id="rdBack" type="button" class="alt">← Volver a reservas</button>
+    </div>
+  </div>
+  </div><!-- /viaje -->
 </main>
 <script src="app.js"></script>
 </body>

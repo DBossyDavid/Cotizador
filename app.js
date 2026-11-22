@@ -60,6 +60,14 @@
     return pad(Math.floor(s / 3600)) + ':' + pad(Math.floor(s / 60) % 60) + ':' + pad(s % 60);
   }
 
+  // 'Hoy' / 'Mañana' / 'Vencida' / '' según la fecha de la reserva
+  function dayLabel(iso, now) {
+    var d = new Date(iso), n = new Date(now == null ? Date.now() : now);
+    var sd = function (x) { return new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); };
+    var diff = Math.round((sd(d) - sd(n)) / 86400000);
+    return diff === 0 ? 'Hoy' : diff === 1 ? 'Mañana' : diff < 0 ? 'Vencida' : '';
+  }
+
   function pad(n) { return String(n).padStart(2, '0'); }
   function icsDate(d) {
     return d.getUTCFullYear() + pad(d.getUTCMonth() + 1) + pad(d.getUTCDate()) + 'T' +
@@ -127,7 +135,8 @@
     moneyToNumber: moneyToNumber, parseTolls: parseTolls, parseDurationSeconds: parseDurationSeconds,
     computeQuote: computeQuote, buildICS: buildICS, googleCalendarURL: googleCalendarURL,
     mapsURL: mapsURL, buildRoutesRequest: buildRoutesRequest,
-    computeWait: computeWait, tripWaitMs: tripWaitMs, tripTotals: tripTotals, fmtDur: fmtDur
+    computeWait: computeWait, tripWaitMs: tripWaitMs, tripTotals: tripTotals, fmtDur: fmtDur,
+    dayLabel: dayLabel
   };
   if (typeof module !== 'undefined' && module.exports) { module.exports = api; return; }
   root.Cotizador = api;
@@ -263,16 +272,17 @@
     return {
       id: String(Date.now()), title: 'Viaje ' + (client ? client + ' – ' : '') + s[0] + ' → ' + s[s.length - 1],
       startISO: new Date(when).toISOString(), durationSec: secs, stops: s, description: desc,
-      total: q.total, km: q.km, client: client
+      total: q.total, km: q.km, client: client, kmCost: q.kmCost, tolls: q.tolls, roundTrip: $('roundTrip').checked
     };
   }
 
   function saveReservation() {
     var r = buildReservation(); if (!r) return;
     var list = LS.get('reservas', []); list.unshift(r); LS.set('reservas', list);
-    renderList();
-    // Calendario: abre Google Calendar con el evento cargado
-    window.open(googleCalendarURL(r), '_blank');
+    renderList(); closeReservation();
+    showTab('reservas');
+    window.scrollTo(0, 0);
+    if ($('addCal').checked) window.open(googleCalendarURL(r), '_blank'); // calendario
   }
   function downloadICS(r) {
     var blob = new Blob([buildICS(r)], { type: 'text/calendar' });
@@ -280,23 +290,85 @@
     a.href = URL.createObjectURL(blob); a.download = 'reserva-' + r.id + '.ics';
     document.body.appendChild(a); a.click(); a.remove();
   }
+
+  // ---------- pestañas ----------
+  var curTab = 'cotizar';
+  var TABS = { cotizar: ['planner', 'tabTrip'], reservas: ['resView', 'tabRes'] };
+  function showTab(name) {
+    if (trip) return; // con un viaje en curso solo se ve el medidor
+    curTab = name;
+    Object.keys(TABS).forEach(function (k) {
+      $(TABS[k][0]).style.display = k === name ? 'block' : 'none';
+      $(TABS[k][1]).classList.toggle('on', k === name);
+    });
+    $('tabs').style.display = 'flex';
+  }
+
+  // ---------- reservas ----------
+  var resOpen = null;
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
   function renderList() {
-    var list = LS.get('reservas', []), box = $('list');
-    box.innerHTML = list.length ? '' : '<p class="muted">Todavía no hay reservas guardadas.</p>';
-    list.forEach(function (r) {
-      var d = document.createElement('div'); d.className = 'card res';
-      d.innerHTML = '<b></b><div class="muted"></div><div class="muted"></div>';
-      d.children[0].textContent = r.title;
-      d.children[1].textContent = new Date(r.startISO).toLocaleString('es-AR') + ' · ' + r.km.toFixed(1) + ' km' +
-        (r.finished ? ' · espera ' + r.waitMin + ' min · ✔ realizado' : '');
-      d.children[2].textContent = 'Total ' + fmt(r.total);
-      var b1 = document.createElement('button'); b1.textContent = 'Agregar al calendario (.ics)'; b1.className = 'small';
-      b1.onclick = function () { downloadICS(r); };
-      var b2 = document.createElement('button'); b2.textContent = 'Borrar'; b2.className = 'small danger';
-      b2.onclick = function () { LS.set('reservas', LS.get('reservas', []).filter(function (x) { return x.id !== r.id; })); renderList(); };
-      d.appendChild(b1); d.appendChild(b2); box.appendChild(d);
+    var all = LS.get('reservas', []);
+    var pend = all.filter(function (r) { return !r.finished; })
+      .sort(function (a, b) { return new Date(a.startISO) - new Date(b.startISO); });
+    var done = all.filter(function (r) { return r.finished; });
+
+    var box = $('list'); box.innerHTML = '';
+    if (!pend.length) box.appendChild(el('p', 'muted', 'No tenés reservas pendientes. Creá una desde la pestaña Cotizar.'));
+    pend.forEach(function (r) {
+      var d = el('div', 'card res clickable');
+      var h = el('div', 'rowline'); h.appendChild(el('b', '', r.title));
+      var lab = dayLabel(r.startISO);
+      if (lab) h.appendChild(el('span', 'chip' + (lab === 'Vencida' ? ' warn' : ''), lab));
+      d.appendChild(h);
+      d.appendChild(el('div', 'muted', new Date(r.startISO).toLocaleString('es-AR', { dateStyle: 'full', timeStyle: 'short' })));
+      var f = el('div', 'rowline'); f.style.marginTop = '6px';
+      f.appendChild(el('span', 'muted', r.km.toFixed(1) + ' km' + (r.client ? ' · ' + r.client : '')));
+      f.appendChild(el('b', 'amt', fmt(r.total) + '  ›'));
+      d.appendChild(f);
+      d.onclick = function () { openReservation(r); };
+      box.appendChild(d);
+    });
+
+    $('doneBox').style.display = done.length ? 'block' : 'none';
+    var dbox = $('doneList'); dbox.innerHTML = '';
+    done.forEach(function (r) {
+      var d = el('div', 'card res');
+      var h = el('div', 'rowline'); h.appendChild(el('b', '', r.title)); h.appendChild(el('b', 'amt', fmt(r.total)));
+      d.appendChild(h);
+      d.appendChild(el('div', 'muted', new Date(r.startISO).toLocaleString('es-AR') + ' · ' + r.km.toFixed(1) + ' km · espera ' + (r.waitMin || 0) + ' min · ✔ realizado'));
+      dbox.appendChild(d);
     });
   }
+
+  function openReservation(r) {
+    resOpen = r;
+    $('resListBox').style.display = 'none'; $('resDetail').style.display = 'block';
+    $('rdTitle').textContent = r.title;
+    $('rdWhen').textContent = new Date(r.startISO).toLocaleString('es-AR', { dateStyle: 'full', timeStyle: 'short' });
+    $('rdClient').textContent = r.client || '—';
+    $('rdRoute').textContent = r.stops.join(' → ') + (r.roundTrip ? '  (ida y vuelta)' : '');
+    var kmCost = r.kmCost != null ? r.kmCost : r.total, tolls = r.tolls || 0;
+    $('rdBreak').innerHTML = '';
+    [[r.km.toFixed(1) + ' km', fmt(kmCost)], ['Peajes', fmt(tolls)]].forEach(function (x) {
+      var row = el('div', 'row'); row.appendChild(el('span', '', x[0])); row.appendChild(el('b', '', x[1]));
+      $('rdBreak').appendChild(row);
+    });
+    var tot = el('div', 'row total'); tot.appendChild(el('span', '', 'TOTAL RESERVADO')); tot.appendChild(el('b', '', fmt(r.total)));
+    $('rdBreak').appendChild(tot);
+    var wp = parseFloat($('waitPrice').value) || 0, gr = parseFloat($('grace').value) || 0;
+    $('rdWaitInfo').textContent = 'Espera: ' + fmt(wp) + ' por minuto' + (gr ? ' (' + gr + ' min gratis)' : '') +
+      '. Se mide durante el viaje.';
+    $('rdMaps').href = mapsURL(r.stops);
+    window.scrollTo(0, 0);
+  }
+  function closeReservation() {
+    resOpen = null;
+    $('resDetail').style.display = 'none'; $('resListBox').style.display = 'block';
+  }
+
+  root.showTab = showTab;
 
   // ---------- Viaje en curso (taxímetro de espera) ----------
   var trip = null, tickTimer = null, wakeLock = null;
@@ -308,28 +380,40 @@
   }
   function releaseWake() { try { if (wakeLock) wakeLock.release(); } catch (e) {} wakeLock = null; }
 
-  function startTrip() {
-    if (!state.lastQuote || !state.route) return showError('Primero calculá el viaje.');
+  function beginTrip(base) {
     showError('');
-    var q = state.lastQuote;
-    LS.set('waitPrice', parseFloat($('waitPrice').value) || 0);
-    LS.set('grace', parseFloat($('grace').value) || 0);
-    trip = {
-      id: String(Date.now()), startedAt: Date.now(), stops: state.stops, client: $('client').value.trim(),
-      km: q.km, kmCost: q.kmCost, tolls: q.tolls, extras: [], waitMs: 0, waitingSince: null,
-      waitPrice: parseFloat($('waitPrice').value) || 0, grace: parseFloat($('grace').value) || 0,
-      durationSec: parseDurationSeconds(state.route.duration) * ($('roundTrip').checked ? 2 : 1),
-      roundTrip: $('roundTrip').checked
-    };
+    var wp = parseFloat($('waitPrice').value) || 0, gr = parseFloat($('grace').value) || 0;
+    LS.set('waitPrice', wp); LS.set('grace', gr);
+    trip = Object.assign({
+      id: String(Date.now()), startedAt: Date.now(), extras: [], waitMs: 0, waitingSince: null, waitPrice: wp, grace: gr
+    }, base);
     LS.set('trip', trip);
     showTrip();
   }
+  // Viaje sin reserva previa (recién cotizado)
+  function startTrip() {
+    if (!state.lastQuote || !state.route) return showError('Primero calculá el viaje.');
+    var q = state.lastQuote;
+    beginTrip({
+      stops: state.stops, client: $('client').value.trim(), km: q.km, kmCost: q.kmCost, tolls: q.tolls,
+      durationSec: parseDurationSeconds(state.route.duration) * ($('roundTrip').checked ? 2 : 1),
+      roundTrip: $('roundTrip').checked
+    });
+  }
+  // Viaje desde una reserva guardada
+  function startFromReservation() {
+    var r = resOpen; if (!r) return;
+    beginTrip({
+      id: r.id, resId: r.id, scheduledISO: r.startISO, title: r.title, stops: r.stops, client: r.client || '',
+      km: r.km, kmCost: r.kmCost != null ? r.kmCost : r.total, tolls: r.tolls || 0,
+      durationSec: r.durationSec || 0, roundTrip: !!r.roundTrip
+    });
+  }
 
   function showTrip() {
-    $('planner').style.display = 'none';
-    $('summary').style.display = 'none';
+    ['planner', 'resView', 'tabs', 'summary'].forEach(function (id) { $(id).style.display = 'none'; });
     $('tripCard').style.display = 'block';
-    $('tripRoute').textContent = trip.stops.join(' → ');
+    $('tripRoute').textContent = (trip.client ? trip.client + ' · ' : '') + trip.stops.join(' → ');
     requestWake();
     clearInterval(tickTimer);
     tickTimer = setInterval(renderTrip, 1000);
@@ -375,6 +459,7 @@
     var t = tripTotals(trip, now);
     var s = trip.stops, client = trip.client;
     var desc = 'Cliente: ' + (client || '-') + '\n' +
+      (trip.scheduledISO ? 'Reservado para: ' + new Date(trip.scheduledISO).toLocaleString('es-AR') + '\n' : '') +
       'Recorrido: ' + s.join(' → ') + (trip.roundTrip ? ' (ida y vuelta)' : '') + '\n' +
       'Distancia: ' + trip.km.toFixed(1) + ' km → ' + fmt(trip.kmCost) + '\n' +
       'Peajes: ' + fmt(trip.tolls) + '\n' +
@@ -382,15 +467,17 @@
       'Espera: ' + fmtDur(tripWaitMs(trip, now)) + ' → ' + fmt(t.wait.cost) + '\n' +
       'TOTAL: ' + fmt(t.total);
     var r = {
-      id: trip.id, title: 'Viaje ' + (client ? client + ' – ' : '') + s[0] + ' → ' + s[s.length - 1],
+      id: trip.id, title: trip.title || ('Viaje ' + (client ? client + ' – ' : '') + s[0] + ' → ' + s[s.length - 1]),
       startISO: new Date(trip.startedAt).toISOString(),
       durationSec: Math.round((now - trip.startedAt) / 1000), stops: s, description: desc,
-      total: t.total, km: trip.km, client: client, finished: true, waitMin: Math.round(tripWaitMs(trip, now) / 60000)
+      total: t.total, km: trip.km, client: client, finished: true, waitMin: Math.round(tripWaitMs(trip, now) / 60000),
+      kmCost: trip.kmCost, tolls: trip.tolls, extras: t.extras, waitCost: t.wait.cost
     };
-    var list = LS.get('reservas', []); list.unshift(r); LS.set('reservas', list);
+    // si venía de una reserva, esa reserva pasa a "realizada"
+    var list = LS.get('reservas', []).filter(function (x) { return x.id !== r.id; }); list.unshift(r); LS.set('reservas', list);
     LS.set('trip', null); trip = null; clearInterval(tickTimer); releaseWake();
     $('tripCard').style.display = 'none';
-    $('planner').style.display = 'block';
+    closeReservation(); showTab('reservas');
     $('summaryText').textContent = desc;
     $('waShare').href = 'https://wa.me/?text=' + encodeURIComponent(desc);
     $('summary').style.display = 'block';
@@ -400,8 +487,10 @@
 
   function cancelTrip() {
     if (!trip || !confirm('¿Cancelar el viaje sin guardarlo?')) return;
+    var fromRes = !!trip.resId;
     LS.set('trip', null); trip = null; clearInterval(tickTimer); releaseWake();
-    $('tripCard').style.display = 'none'; $('planner').style.display = 'block';
+    $('tripCard').style.display = 'none';
+    closeReservation(); showTab(fromRes ? 'reservas' : 'cotizar');
   }
 
   document.addEventListener('visibilitychange', function () { if (trip && !document.hidden) { requestWake(); renderTrip(); } });
@@ -412,13 +501,24 @@
     $('waitPrice').onchange = function () { LS.set('waitPrice', parseFloat($('waitPrice').value) || 0); };
     $('grace').onchange = function () { LS.set('grace', parseFloat($('grace').value) || 0); };
     $('startTrip').onclick = startTrip;
+    $('rdStart').onclick = startFromReservation;
+    $('rdBack').onclick = closeReservation;
+    $('rdDel').onclick = function () {
+      if (!resOpen || !confirm('¿Borrar esta reserva?')) return;
+      var id = resOpen.id; LS.set('reservas', LS.get('reservas', []).filter(function (x) { return x.id !== id; }));
+      closeReservation(); renderList();
+    };
+    $('rdIcs').onclick = function () { if (resOpen) downloadICS(resOpen); };
+    $('rdGcal').onclick = function () { if (resOpen) window.open(googleCalendarURL(resOpen), '_blank'); };
+    $('tabTrip').onclick = function () { showTab('cotizar'); };
+    $('tabRes').onclick = function () { closeReservation(); showTab('reservas'); };
     $('waitBtn').onclick = toggleWait;
     $('extraBtn').onclick = addExtra;
     $('finishBtn').onclick = finishTrip;
     $('cancelBtn').onclick = cancelTrip;
     $('closeSummary').onclick = function () { $('summary').style.display = 'none'; };
     trip = LS.get('trip', null);
-    if (trip) showTrip();
+    if (trip) showTrip(); else showTab('cotizar');
 
     $('apiKey').value = LS.get('apiKey', '');
     $('pricePerKm').value = LS.get('pricePerKm', 1000);
@@ -434,7 +534,6 @@
     $('manualToll').oninput = renderQuote;
     $('pricePerKm').oninput = renderQuote;
     $('save').onclick = saveReservation;
-    $('icsNow').onclick = function () { var r = buildReservation(); if (r) downloadICS(r); };
     renderList();
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
   });
